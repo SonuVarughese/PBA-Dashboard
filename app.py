@@ -1,0 +1,154 @@
+import pandas as pd
+import plotly.express as px
+import plotly.graph_objects as go
+import streamlit as st
+
+st.set_page_config(page_title="GreenSupply Electronics Dashboard", layout="wide")
+
+DATA_FILE = "data.xlsx"  # your Excel file (renamed)
+
+
+@st.cache_data
+def load_data():
+    orders = pd.read_excel(DATA_FILE, sheet_name="Orders")
+    inv = pd.read_excel(DATA_FILE, sheet_name="Inventory")
+    inv["Warehouse"] = inv["Warehouse"].astype(str).str.strip()
+    # One row in the Inventory sheet has a blank warehouse. It sits in the
+    # Barcelona block, and your pivot counts it as Barcelona, so we do too.
+    inv.loc[inv["Warehouse"] == "", "Warehouse"] = "Barcelona"
+    return orders, inv
+
+
+orders, inv = load_data()
+
+# ---------- Sidebar filters (these replace your Excel slicers) ----------
+st.sidebar.header("Filters")
+
+
+def pick(label, col):
+    options = sorted(orders[col].unique())
+    return st.sidebar.multiselect(label, options, default=options)
+
+
+wh = pick("Warehouse", "Warehouse")
+cat = pick("Product Category", "Product Category")
+car = pick("Carrier", "Carrier")
+
+df = orders[
+    orders["Warehouse"].isin(wh)
+    & orders["Product Category"].isin(cat)
+    & orders["Carrier"].isin(car)
+]
+inv_f = inv[inv["Warehouse"].isin(wh) & inv["Product Category"].isin(cat)]
+
+st.title("GreenSupply Electronics Dashboard")
+
+if df.empty:
+    st.warning("No data for these filters. Please select at least one option in each filter.")
+    st.stop()
+
+# ---------- KPIs (same formulas as your pivot tables) ----------
+rev = df["Revenue (€)"].sum()
+npm = df["Profit Adjusted"].sum() / rev
+aov = df["Revenue (€)"].mean()
+ontime = df["On Time"].mean()
+ret_rate = df["Returned Quantity"].sum() / df["Sales Quantity"].sum()
+co2 = df["Estimated Transport Emissions (kg CO₂e)"].sum() / df["Sales Quantity"].sum()
+
+fault = df[df["Return Reason"] == "Product fault"].groupby("Product Category")["Returned Quantity"].sum()
+fault_idx = fault / fault.sum() if fault.sum() > 0 else fault
+top_fault = fault_idx.idxmax() if len(fault_idx) else "-"
+
+k = st.columns(6)
+k[0].metric("Net profit margin", f"{npm:.1%}")
+k[1].metric("Average order value", f"€{aov:,.2f}")
+k[2].metric("On-time delivery", f"{ontime:.1%}")
+k[3].metric("Return rate", f"{ret_rate:.2%}")
+k[4].metric("kg CO₂e per unit", f"{co2:.2f}")
+k[5].metric(
+    "Product fault index",
+    f"{fault_idx.max() * 100:.1f}" if len(fault_idx) else "-",
+    help=f"Share of 'Product fault' returns from the top category: {top_fault}",
+)
+
+st.divider()
+
+# ---------- Row 1 ----------
+c1, c2 = st.columns(2)
+
+with c1:
+    g = df.groupby("Warehouse").agg(rev=("Revenue (€)", "sum"), prof=("Profit Adjusted", "sum")).reset_index()
+    g["margin"] = g["prof"] / g["rev"]
+    fig = go.Figure()
+    fig.add_bar(x=g["Warehouse"], y=g["rev"], name="Revenue (€)")
+    fig.add_bar(x=g["Warehouse"], y=g["prof"], name="Profit adjusted (€)")
+    fig.add_scatter(x=g["Warehouse"], y=g["margin"], name="Net profit margin", yaxis="y2", mode="lines+markers")
+    fig.update_layout(
+        title="Net profit by warehouse",
+        barmode="group",
+        yaxis=dict(title="€"),
+        yaxis2=dict(title="Margin", overlaying="y", side="right", tickformat=".0%", showgrid=False),
+        legend=dict(orientation="h", y=-0.2),
+    )
+    st.plotly_chart(fig, width='stretch')
+
+with c2:
+    g = df.groupby(["Customer Segment", "Customer Region"])["Revenue (€)"].mean().reset_index()
+    fig = px.bar(
+        g, y="Customer Segment", x="Revenue (€)", color="Customer Region",
+        barmode="group", orientation="h", title="Average order value by customer segment",
+    )
+    st.plotly_chart(fig, width='stretch')
+
+# ---------- Row 2 ----------
+c3, c4, c5 = st.columns(3)
+
+with c3:
+    g = df.groupby(["Carrier", "Order Priority"])["On Time"].mean().reset_index()
+    fig = px.bar(
+        g, x="Carrier", y="On Time", color="Order Priority", barmode="group",
+        category_orders={"Order Priority": ["High", "Medium", "Low"]},
+        title="On-time delivery % by carrier and priority",
+    )
+    fig.update_yaxes(tickformat=".0%")
+    st.plotly_chart(fig, width='stretch')
+
+with c4:
+    g = df.groupby("Carrier").agg(r=("Returned Quantity", "sum"), q=("Sales Quantity", "sum")).reset_index()
+    g["Return rate"] = g["r"] / g["q"]
+    g = g.sort_values("Return rate")
+    fig = px.bar(g, y="Carrier", x="Return rate", orientation="h", title="Return rate by carrier")
+    fig.update_xaxes(tickformat=".1%")
+    st.plotly_chart(fig, width='stretch')
+
+with c5:
+    g = df.groupby("Carrier").agg(e=("Estimated Transport Emissions (kg CO₂e)", "sum"), q=("Sales Quantity", "sum")).reset_index()
+    g["kg CO₂e per unit"] = g["e"] / g["q"]
+    fig = px.bar(g, x="Carrier", y="kg CO₂e per unit", title="Emissions per unit by carrier")
+    st.plotly_chart(fig, width='stretch')
+
+# ---------- Row 3 ----------
+c6, c7 = st.columns(2)
+
+with c6:
+    if len(fault_idx):
+        fi = fault_idx.reset_index()
+        fi.columns = ["Product Category", "Fault index"]
+        fig = px.pie(fi, names="Product Category", values="Fault index", title="Product fault returns by category")
+        fig.update_traces(textinfo="percent+label")
+        st.plotly_chart(fig, width='stretch')
+    else:
+        st.info("No 'Product fault' returns for these filters.")
+
+with c7:
+    if inv_f.empty:
+        st.info("No inventory data for these filters.")
+    else:
+        g = inv_f.groupby("Warehouse").agg(s=("Monthly Sales Qty", "sum"), i=("Avg Inventory Units", "sum")).reset_index()
+        g["Inventory turnover"] = g["s"] / g["i"]
+        fig = px.bar(g, x="Warehouse", y="Inventory turnover", title="Inventory turnover by warehouse")
+        st.plotly_chart(fig, width='stretch')
+        st.caption("Inventory turnover does not use the Carrier filter (the inventory data has no carrier).")
+
+with st.expander("See the data"):
+    st.dataframe(df, width='stretch')
