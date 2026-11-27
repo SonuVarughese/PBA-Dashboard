@@ -61,14 +61,14 @@ fault_idx = fault / fault.sum() if fault.sum() > 0 else fault
 top_fault = fault_idx.idxmax() if len(fault_idx) else "-"
 
 k = st.columns(6)
-k[0].metric("Net profit margin", f"{npm:.2%}")
+k[0].metric(" profit margin", f"{npm:.0%}")
 k[1].metric("Average order value", f"€{aov:,.2f}")
 k[2].metric("On-time delivery", f"{ontime:.2%}")
 k[3].metric("Return rate", f"{ret_rate:.2%}")
 k[4].metric("kg CO₂e per unit", f"{co2:.2f}")
 k[5].metric(
     "Product fault index",
-    f"{fault_idx.max() * 100:.2f}" if len(fault_idx) else "-",
+    f"{fault_idx.max():.1%}" if len(fault_idx) else "-",
     help=f"Share of 'Product fault' returns from the top category: {top_fault}",
 )
 
