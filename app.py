@@ -42,6 +42,7 @@ df = orders[
 inv_f = inv[inv["Warehouse"].isin(wh) & inv["Product Category"].isin(cat)]
 
 st.title("GreenSupply Electronics Dashboard")
+st.caption(f"Data: {orders.shape[0]:,} orders × {orders.shape[1]} columns | {orders['Order Date'].min():%d %b %Y} to {orders['Order Date'].max():%d %b %Y} | {orders['Warehouse'].nunique()} warehouses, {orders['Carrier'].nunique()} carriers, {orders['Product Category'].nunique()} product categories")
 
 if df.empty:
     st.warning("No data for these filters. Please select at least one option in each filter.")
